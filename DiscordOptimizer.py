@@ -27,6 +27,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 # ──────────────── CTk DPI Crash Patch ────────────────
 import customtkinter.windows.widgets.scaling.scaling_tracker as scaling_tracker
+
 # ──────────────── Universal Updater Hash Utility ────────────────
 def find_discord_updater():
     """
@@ -68,7 +69,6 @@ def compute_file_sha256(filepath):
         logger.error(f"Failed to compute hash for {filepath}: {e}")
         return None
 # ──────────────── Patch for DPI scaling crash in CTk ────────────────
-import customtkinter.windows.widgets.scaling.scaling_tracker as scaling_tracker
 
 original_check_dpi_scaling = scaling_tracker.ScalingTracker.check_dpi_scaling
 
@@ -919,9 +919,12 @@ def show_progress(task_func, title):
 
 from PIL import ImageTk, Image
 
+# Asset directory relative to this script
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Assets")
+
 # Asset loader helper
 def asset(file_name):
-    return os.path.join("assets", file_name)
+    return os.path.join(ASSETS_DIR, file_name)
 
 # Logo and title setup
 try:
@@ -994,8 +997,8 @@ def load_rounded_image(path, size=(48, 48)):
     rounded.paste(img, (0, 0), mask)
     return ImageTk.PhotoImage(rounded)
 
-sergio_photo = load_rounded_image(os.path.join("assets", "sergio.png"))
-calixto_photo = load_rounded_image(os.path.join("assets", "calixto.png"))
+sergio_photo = load_rounded_image(asset("sergio.png"))
+calixto_photo = load_rounded_image(asset("calixto.png"))
 
 credits_tab = tabs.tab("Credits")
 credits_frame = ctk.CTkFrame(credits_tab, fg_color="transparent")
@@ -1095,6 +1098,7 @@ def create_profile_card(parent, name, role, image, links=None, tags=None):
 
             tooltip_text = os.path.splitext(os.path.basename(icon_path))[0].capitalize()
             ToolTip(icon_btn, tooltip_text)
+
 # ──────────────── Credits Tab ────────────────
 credits_inner = ctk.CTkFrame(tabs.tab("Credits"), fg_color="transparent")
 credits_inner.pack(anchor="n", padx=10, pady=10)
