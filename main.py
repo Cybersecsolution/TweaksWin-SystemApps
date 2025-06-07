@@ -15,18 +15,23 @@ import time
 import webbrowser
 import winreg
 import atexit
+
 # ──────────────── Third-Party Libraries ────────────────
 import psutil
 import pystray
 from PIL import Image, ImageDraw, ImageTk
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+
 # ──────────────── GUI Libraries ────────────────
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
+
 # ──────────────── CTk DPI Crash Patch ────────────────
 import customtkinter.windows.widgets.scaling.scaling_tracker as scaling_tracker
+
+
 # ──────────────── Universal Updater Hash Utility ────────────────
 def find_discord_updater():
     """
@@ -67,10 +72,12 @@ def compute_file_sha256(filepath):
     except Exception as e:
         logger.error(f"Failed to compute hash for {filepath}: {e}")
         return None
+
+
 # ──────────────── Patch for DPI scaling crash in CTk ────────────────
 import customtkinter.windows.widgets.scaling.scaling_tracker as scaling_tracker
-
 original_check_dpi_scaling = scaling_tracker.ScalingTracker.check_dpi_scaling
+
 
 def safe_check_dpi_scaling(cls):
     """
@@ -99,8 +106,8 @@ logging.basicConfig(
 APP_VERSION = "1.0.0"
 
 logger = logging.getLogger()
-
 logger.info(f"Optimizer {APP_VERSION} started")
+
 
 @atexit.register
 def shutdown_logging():
@@ -109,9 +116,9 @@ def shutdown_logging():
             handler.flush()
             handler.close()
         except Exception:
-            pass  
-# ──────────────── Constants ────────────────
+            pass
 
+# ──────────────── Constants ────────────────
 DISCORD_CACHE_DIRS = [
     "Cache",
     "GPUCache",
@@ -144,8 +151,8 @@ DISCORD_MODULE_PREFIXES = [
     "discord_voice-"
 ]
 
-# ──────────────── Platform Check ────────────────
 
+# ──────────────── Platform Check ────────────────
 # Ensure the application is running on Windows
 if platform.system() != "Windows":
     messagebox.showerror(
@@ -153,6 +160,7 @@ if platform.system() != "Windows":
         message="This application only works on Windows"
     )
     sys.exit(1)
+
 
 # ──────────────── Admin Privileges ────────────────
 def is_admin():
@@ -183,15 +191,17 @@ if not is_admin():
         )
     sys.exit()
 
+
 # ──────────────── Paths Setup ────────────────
 local_appdata    = os.environ["LOCALAPPDATA"]
 program_files    = os.environ.get("ProgramFiles", r"C:\Program Files")
 program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
 
+
 # ──────────────── Application Detection ────────────────
 def find_discord():
-    variants = ["discord", "discordptb", "discordcanary", "discorddevelopment"]
-    
+    variants = "discord", "discordptb", "discordcanary", "discorddevelopment"
+
     for name in os.listdir(local_appdata):
         lname = name.lower()
         if any(lname.startswith(variant) for variant in variants):
@@ -207,10 +217,11 @@ def find_discord():
                 exe_path = os.path.join(base_path, latest, "Discord.exe")
                 if os.path.exists(exe_path):
                     return base_path, "Discord.exe"
-    
+
     return None, None
 
 discord_path, discord_exe = find_discord()
+
 
 def start_dll_watcher():
     if not discord_path:
@@ -239,6 +250,7 @@ def start_dll_watcher():
 
     except Exception as e:
         logger.error(f"Failed to start real-time watchers: {e}")
+
 
 # ──────────────── Helper Functions ────────────────
 def kill_process_by_name(name):
@@ -444,9 +456,9 @@ def lock_down_discord_modules():
     except Exception as e:
         logger.error(f"Failed to lock modules folder: {e}")
         messagebox.showerror("ACL Lock Failed", f"Could not secure modules folder:\n{e}")
-        
-# ──────────────── Discord Functions ────────────────
 
+
+# ──────────────── Discord Functions ────────────────
 def clear_discord_cache():
     """Clear Discord's temporary cache files."""
     if discord_path:
@@ -750,6 +762,7 @@ def reset_discord_tcp_mode():
         logger.error(f"Failed to reset TCP/UDP mode: {e}")
         raise
 
+
 # ──────────────── ToolTip Class ────────────────
 class ToolTip:
     def __init__(self, widget, text):
@@ -762,18 +775,18 @@ class ToolTip:
 
     def show(self, _event=None):
         """Display the tooltip window near the widget."""
-        x = self.widget.winfo_rootx() + self.widget.winfo_width() + 10  
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() + 10
         y = self.widget.winfo_rooty() + (self.widget.winfo_height() // 2) - 10
 
         self.tooltip = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)  
+        tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
 
         label = tk.Label(
             tw,
             text=self.text,
-            background="#1f2937",      
-            foreground="#f9fafb",      
+            background="#1f2937",
+            foreground="#f9fafb",
             borderwidth=1,
             relief="solid",
             font=("Segoe UI", 9),
@@ -787,6 +800,7 @@ class ToolTip:
             self.tooltip.destroy()
             self.tooltip = None
 
+
 # ──────────────── GUI Setup ────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -795,8 +809,9 @@ app = ctk.CTk()
 app.geometry("470x790")
 app.title("Discord Optimizer")
 app.resizable(False, False)
-app.overrideredirect(True)             
-app.attributes("-alpha", 0.96)         
+app.overrideredirect(True)
+app.attributes("-alpha", 0.96)
+
 
 def make_window_rounded(win, radius=25):
     try:
@@ -810,21 +825,16 @@ def make_window_rounded(win, radius=25):
 
 app.x = app.y = None
 
-def start_move(e):
-    app.x, app.y = e.x, e.y
-
-def stop_move(e):
-    app.x = app.y = None
-
-def do_move(e):
+def do_move_gemt(e):
     if app.x is not None and app.y is not None:
         app.geometry(f'+{e.x_root - app.x}+{e.y_root - app.y}')
 
-app.bind("<ButtonPress-1>", start_move)
-app.bind("<ButtonRelease-1>", stop_move)
-app.bind("<B1-Motion>", do_move)
+app.bind("<ButtonPress-1>", lambda e: (setattr(app, 'x', e.x), setattr(app, 'y', e.y)))
+app.bind("<ButtonRelease-1>", lambda e: (setattr(app, 'x', None), setattr(app, 'y', None)))
+app.bind("<B1-Motion>", do_move_gemt)
+
 # ──────────────── System Tray Integration ────────────────
-tray_icon = None  
+tray_icon = None
 
 def safe_exit():
     global tray_icon
@@ -844,6 +854,7 @@ def create_tray_icon():
 
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
     dc = ImageDraw.Draw(image)
+
     dc.ellipse((16, 16, 48, 48), fill='#1a56db', outline='#1e3a8a')
     dc.ellipse((20, 20, 44, 44), fill='#3b82f6')
 
@@ -874,6 +885,7 @@ def create_tray_icon():
     tray_icon = pystray.Icon("optimizer", image, "Discord Optimizer", menu)
     tray_icon.title = "Discord Optimizer"
     threading.Thread(target=tray_icon.run, daemon=True).start()
+
 
 # ──────────────── Progress Dialog ────────────────
 def show_progress(task_func, title):
@@ -915,8 +927,8 @@ def show_progress(task_func, title):
 
     threading.Thread(target=run, daemon=True).start()
 
-# ──────────────── Tabs & Buttons ────────────────
 
+# ──────────────── Tabs & Buttons ────────────────
 from PIL import ImageTk, Image
 
 # Asset loader helper
@@ -969,6 +981,8 @@ tabs.pack(pady=(20, 10), padx=10, fill="both", expand=True)
 tabs.add("Discord")
 tabs.add("Settings")
 tabs.add("Credits")
+
+
 # ──────────────── Tab Font Style ────────────────
 def update_tab_font_style():
     try:
@@ -982,8 +996,10 @@ def update_tab_font_style():
 
 tabs._segmented_button.configure(command=lambda value: [tabs.set(value), update_tab_font_style()])
 app.after(100, update_tab_font_style)
+
 # ──────────────── Tabs & Buttons ────────────────
 from PIL import Image, ImageTk, ImageDraw
+
 
 def load_rounded_image(path, size=(48, 48)):
     img = Image.open(path).resize(size, Image.LANCZOS).convert("RGBA")
@@ -1020,6 +1036,7 @@ ctk.CTkLabel(
     justify="center"
 ).pack(pady=(0, 20))
 
+
 def tag_color_for(tag):
     tag_map = {
         "backend": "#1e3a8a",
@@ -1032,6 +1049,7 @@ def tag_color_for(tag):
     return tag_map.get(tag.lower(), "#4b5563")  
 
 from PIL import Image, ImageTk, ImageDraw
+
 
 def create_profile_card(parent, name, role, image, links=None, tags=None):
     card = ctk.CTkFrame(parent, fg_color="#1f2937", corner_radius=16)
@@ -1048,14 +1066,14 @@ def create_profile_card(parent, name, role, image, links=None, tags=None):
     text_frame.pack(side="left", fill="both", expand=True)
 
     tk.Label(
-    text_frame, text=name, font=("Segoe UI", 14, "bold"),
-    fg="#3b82f6", bg="#1f2937"
-).pack(anchor="w")
+        text_frame, text=name, font=("Segoe UI", 14, "bold"),
+        fg="#3b82f6", bg="#1f2937"
+    ).pack(anchor="w")
 
     tk.Label(
-    text_frame, text=role, font=("Segoe UI", 11),
-    fg="#94a3b8", bg="#1f2937", wraplength=280, justify="left"
-).pack(anchor="w", pady=(3, 0))
+        text_frame, text=role, font=("Segoe UI", 11),
+        fg="#94a3b8", bg="#1f2937", wraplength=280, justify="left"
+    ).pack(anchor="w", pady=(3, 0))
 
     if tags:
         tag_frame = tk.Frame(card, bg="#1f2937")
@@ -1095,6 +1113,7 @@ def create_profile_card(parent, name, role, image, links=None, tags=None):
 
             tooltip_text = os.path.splitext(os.path.basename(icon_path))[0].capitalize()
             ToolTip(icon_btn, tooltip_text)
+
 # ──────────────── Credits Tab ────────────────
 credits_inner = ctk.CTkFrame(tabs.tab("Credits"), fg_color="transparent")
 credits_inner.pack(anchor="n", padx=10, pady=10)
@@ -1109,6 +1128,7 @@ create_profile_card(
         (asset("github.png"), "https://github.com/Salc-wm"),
         (asset("discord.png"), "https://discord.gg/UXyUh9FczM")
     ],
+
     tags=["Backend", "Performance", "Clean Code"]
 )
 
@@ -1126,11 +1146,11 @@ create_profile_card(
     ],
     tags=["UX", "Frontend", "Security"]
 )
+
 # ───── Footer Separator ─────
 tk.Frame(credits_inner, height=1, bg="#374151").pack(fill="x", padx=20, pady=(20, 0))
 
 # ───── Copyright Label ─────
-
 # ──────────────── Footer & Tabs Integration ────────────────
 ctk.CTkLabel(
     credits_inner,
@@ -1232,6 +1252,7 @@ def create_control_button(text, x_offset_from_right, command, text_color="white"
     app.after(20, place_button)
     return btn
 
+
 # ❌ Close Button
 close_btn = create_control_button(
     "✕",
@@ -1253,7 +1274,12 @@ min_btn = create_control_button(
 )
 
 
-# ──────────────── 🏁 Startup & Loop ────────────────
-app.after(100, lambda: make_window_rounded(app, 15))   
-app.after(3000, start_dll_watcher)                      
-app.mainloop()
+def main():  # ──────────────── 🏁 Startup & Loop ────────────────
+    app.after(100, lambda: make_window_rounded(app, 15))
+    app.after(3000, start_dll_watcher)
+
+    app.mainloop()
+
+
+if __name__ == '__main__':
+    main()
