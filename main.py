@@ -16,6 +16,8 @@ import webbrowser
 import winreg
 import atexit
 
+from pathlib import Path
+
 # ──────────────── Third-Party Libraries ────────────────
 import psutil
 import pystray
@@ -31,45 +33,52 @@ import customtkinter as ctk
 # ──────────────── CTk DPI Crash Patch ────────────────
 import customtkinter.windows.widgets.scaling.scaling_tracker as scaling_tracker
 
+# Asset loader helper
+def asset(file_name):
+    return os.path.join("assets", file_name)
+
 
 # ──────────────── Universal Updater Hash Utility ────────────────
-def find_discord_updater():
+def find_discord_updater() -> str | None:
     """
     Locate Discord's Update.exe by scanning versioned installations in LOCALAPPDATA.
     Returns the full path to Update.exe if found; otherwise returns None.
     """
+    base = os.environ.get("LOCALAPPDATA", "")
+    entry_discord = (entry for entry in os.listdir(base)
+                     if entry.lower().startswith("discord"))
+
     try:
-        base = os.environ.get("LOCALAPPDATA", "")
-        for entry in os.listdir(base):
-            if entry.lower().startswith("discord"):
-                root = os.path.join(base, entry)
-                versions = [v for v in os.listdir(root) if v.startswith("app-")]
-                if versions:
-                    latest = max(
-                        versions, 
-                        key=lambda v: os.path.getmtime(os.path.join(root, v))
-                    )
-                    updater = os.path.join(root, latest, "Update.exe")
-                    if os.path.exists(updater):
-                        return updater
-        return None
+        for entry in entry_discord:
+            root = os.path.join(base, entry)
+            versions = [v for v in os.listdir(root) if v.startswith("app-")]
+
+            if versions:
+                latest = max(versions, key=lambda v: os.path.getmtime(os.path.join(root, v)))
+
+                updater = os.path.join(root, latest, "Update.exe")
+                if os.path.exists(updater):
+                    return updater
+
     except Exception as e:
         logger.error(f"Error locating Update.exe: {e}")
-        return None
+
+    return None
 
 
-def compute_file_sha256(filepath):
+def compute_file_sha256(filepath: str) -> str | None:
     """
     Compute and return the SHA-256 hash of a file.
     Returns the hex digest string if successful; otherwise returns None.
     """
-    sha256 = hashlib.sha256()
+    sha256_hash = hashlib.sha256()
+
     try:
         with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                sha256.update(chunk)
+            while chunk := f.read(65536): sha256_hash.update(chunk)
+
         return sha256.hexdigest()
-    except Exception as e:
+    except (FileNotFoundError, PermissionError) as e:
         logger.error(f"Failed to compute hash for {filepath}: {e}")
         return None
 
@@ -84,10 +93,12 @@ def safe_check_dpi_scaling(cls):
     Patch for CTk's DPI scaling tracker to prevent RuntimeError
     caused by dynamic modification of window_widgets_dict during iteration.
     """
+    windows = (window for window in list(cls.window_widgets_dict.keys()) if not window.winfo_exists())
+
     try:
-        for window in list(cls.window_widgets_dict.keys()):
-            if not window.winfo_exists():
-                cls.window_widgets_dict.pop(window, None)
+        for window in windows:
+            cls.window_widgets_dict.pop(window, None)
+
     except RuntimeError:
         pass
 
@@ -103,7 +114,7 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.3"
 
 logger = logging.getLogger()
 logger.info(f"Optimizer {APP_VERSION} started")
@@ -119,17 +130,17 @@ def shutdown_logging():
             pass
 
 # ──────────────── Constants ────────────────
-DISCORD_CACHE_DIRS = [
+DISCORD_CACHE_DIRS = (
     "Cache",
     "GPUCache",
     "Code Cache"
-]
+)
 
-DISCORD_LOG_PATTERNS = [
+DISCORD_LOG_PATTERNS = (
     "*.log",
     "packages\\*.nupkg",
     "crashpad\\reports\\*.dmp"
-]
+)
 
 FIREWALL_RULE_ID = "{3C1F2E84-A4E2-4D9F-9F4E-123456789ABC}"
 FIREWALL_RULE_NAME = f"Discord Optimizer TCP Mode {FIREWALL_RULE_ID}"
@@ -138,18 +149,18 @@ HASH_VERIFICATION_FILE = os.path.join(
     os.environ.get("LOCALAPPDATA", ""), "trusted_update.ver"
 )
 
-DISCORD_ALLOWED_LOCALES = [
+DISCORD_ALLOWED_LOCALES = (
     "en-US.pak",
     "pt-BR.pak"
-]
+)
 
 
-DISCORD_MODULE_PREFIXES = [
+DISCORD_MODULE_PREFIXES = (
     "discord_desktop_core-",
     "discord_modules-",
     "discord_utils-",
     "discord_voice-"
-]
+)
 
 
 # ──────────────── Platform Check ────────────────
@@ -159,19 +170,21 @@ if platform.system() != "Windows":
         title="Unsupported Platform",
         message="This application only works on Windows"
     )
+
     sys.exit(1)
 
 
 # ──────────────── Admin Privileges ────────────────
-def is_admin():
+def is_admin() -> bool:
     """
     Check if the script is running with administrative privileges.
     """
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
+    try: return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception as e:
         logger.error(f"Admin check failed: {e}")
-        return False
+
+    return False
+
 
 if not is_admin():
     try:
@@ -180,15 +193,16 @@ if not is_admin():
             "runas",
             sys.executable,
             " ".join(sys.argv),
-            None,
-            1
+            None, 1
         )
+
     except Exception as e:
         logger.error(f"Admin elevation failed: {e}")
         messagebox.showerror(
             title="Admin Required",
             message="This application requires administrator privileges."
         )
+
     sys.exit()
 
 
@@ -199,31 +213,39 @@ program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)
 
 
 # ──────────────── Application Detection ────────────────
-def find_discord():
+def find_discord() -> tuple[str, str] | None:
     variants = "discord", "discordptb", "discordcanary", "discorddevelopment"
+    paths = (name for name in os.listdir(local_appdata) if any(name.lower().startswith(variant) for variant in variants))
 
-    for name in os.listdir(local_appdata):
-        lname = name.lower()
-        if any(lname.startswith(variant) for variant in variants):
-            base_path = os.path.join(local_appdata, name)
+    for name in paths:
+        try:
+            base_path = Path(local_appdata) / name
 
-            top_exe = os.path.join(base_path, f"{name}.exe")
-            if os.path.exists(top_exe):
-                return base_path, f"{name}.exe"
+            top_exe = base_path / f"{name}.exe"
+            if top_exe.exists():
+                return str(base_path), f"{name}.exe"
 
-            versions = [v for v in os.listdir(base_path) if v.startswith("app-")]
-            if versions:
-                latest = max(versions, key=lambda v: os.path.getmtime(os.path.join(base_path, v)))
-                exe_path = os.path.join(base_path, latest, "Discord.exe")
-                if os.path.exists(exe_path):
-                    return base_path, "Discord.exe"
+            version_dirs = sorted([
+                p for p in base_path.iterdir()
+                if p.is_dir() and p.name.startswith("app-")
+            ])
 
-    return None, None
+            if not version_dirs:
+                continue
+
+            latest_version_path = version_dirs[-1]
+            exe_path = latest_version_path / f"{name}.exe"
+
+            if exe_path.exists():
+                return str(latest_version_path), exe_path.name
+
+        except FileNotFoundError: continue
+    return None
 
 discord_path, discord_exe = find_discord()
 
 
-def start_dll_watcher():
+def start_dll_watcher() -> None:
     if not discord_path:
         logger.warning("Discord path not found — DLL watcher not started.")
         return
@@ -243,6 +265,7 @@ def start_dll_watcher():
 
         observer = Observer()
         observer.schedule(DLLHijackHandler(), watch_path, recursive=True)
+
         observer.daemon = True
         observer.start()
 
@@ -253,37 +276,41 @@ def start_dll_watcher():
 
 
 # ──────────────── Helper Functions ────────────────
-def kill_process_by_name(name):
+def kill_process_by_name(name: str) -> list:
     """
     Kill all processes that match the given name (case-insensitive).
     Returns a list of killed process PIDs.
     """
+    process_infos = (proc for proc in psutil.process_iter(['name']) if proc.info['name'] and proc.info['name'].lower() == name.lower())
+
     killed = []
-    for proc in psutil.process_iter(['name']):
-        if proc.info['name'] and proc.info['name'].lower() == name.lower():
-            try:
-                proc.kill()
-                killed.append(proc.pid)
-                logger.info(f"Killed process: {name} (PID: {proc.pid})")
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logger.warning(f"Failed to kill {name}: {e}")
+    for proc in process_infos:
+        try:
+            proc.kill()
+
+            killed.append(proc.pid)
+            logger.info(f"Killed process: {name} (PID: {proc.pid})")
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            logger.warning(f"Failed to kill {name}: {e}")
+
     return killed
 
 
-def set_priority_by_name(name, priority=psutil.HIGH_PRIORITY_CLASS):
+def set_priority_by_name(name: str, priority=psutil.HIGH_PRIORITY_CLASS) -> None:
     """
     Set CPU priority for all processes with the given name.
     """
-    for proc in psutil.process_iter(['name']):
-        if proc.info['name'] and proc.info['name'].lower() == name.lower():
-            try:
-                proc.nice(priority)
-                logger.info(f"Set priority for {name} to {priority}")
-            except Exception as e:
-                logger.warning(f"Failed to set priority for {name}: {e}")
+    process_infos = (proc for proc in psutil.process_iter(['name']) if proc.info['name'] and proc.info['name'].lower() == name.lower())
+
+    for proc in process_infos:
+        try:
+            proc.nice(priority)
+            logger.info(f"Set priority for {name} to {priority}")
+        except Exception as e:
+            logger.warning(f"Failed to set priority for {name}: {e}")
 
 
-def remove_dirs(base_path, folders):
+def remove_dirs(base_path: str, folders: list) -> None:
     """
     Safely remove specified directories from the base path.
     Prevents symlink abuse and path traversal.
@@ -298,9 +325,11 @@ def remove_dirs(base_path, folders):
             if os.path.islink(target_path):
                 logger.warning(f"Skipped symlink (not deleting): {target_path}")
                 continue
+
             if not real_path.startswith(base_real):
                 logger.warning(f"Blocked deletion attempt outside base: {real_path}")
                 continue
+
             if os.path.exists(real_path):
                 shutil.rmtree(real_path, ignore_errors=True)
                 logger.info(f"Removed directory: {real_path}")
@@ -308,39 +337,43 @@ def remove_dirs(base_path, folders):
             logger.error(f"Failed to remove directory {real_path}: {e}")
 
 
-def remove_files_by_patterns(base_path, patterns):
+def remove_files_by_patterns(base_path: str, patterns: list) -> None:
     """
     Remove files in base_path matching any glob pattern in 'patterns'.
     """
     for pattern in patterns:
         full_pattern = os.path.join(base_path, pattern)
+
         for file in glob.glob(full_pattern, recursive=True):
             try:
-                os.chmod(file, 0o666)  
+                os.chmod(file, 0o666)
                 os.remove(file)
+
                 logger.info(f"Removed file: {file}")
             except Exception as e:
                 logger.error(f"Failed to remove file {file}: {e}")
 
 
-def verify_file_sha256(filepath, expected_hash):
+def verify_file_sha256(filepath: str, expected_hash) -> bool:
     """
     Verify file integrity by comparing its SHA-256 hash to an expected value.
     Returns True if they match.
     """
     sha256 = hashlib.sha256()
+
     try:
         with open(filepath, "rb") as f:
-            for block in iter(lambda: f.read(65536), b""):
-                sha256.update(block)
+            while chunk := f.read(65536): sha256_hash.update(chunk)
+
         file_hash = sha256.hexdigest()
         return file_hash.lower() == expected_hash.lower()
+
     except Exception as e:
         logger.error(f"Failed to hash file {filepath}: {e}")
         return False
 
 
-def sanitize_discord_modules():
+def sanitize_discord_modules() -> None:
     """
     Remove unauthorized modules and known hijackable DLLs from Discord modules.
     """
@@ -361,17 +394,17 @@ def sanitize_discord_modules():
         logger.warning("Discord path not found — skipping module sanitization.")
         return
 
-    try:
-        for sub in os.listdir(discord_path):
-            if not sub.startswith("app-"):
-                continue
+    sub_dirs = (sub for sub in os.listdir(discord_path) if sub.startswith("app-"))
 
+    try:
+        for sub in sub_dirs:
             modules_path = os.path.join(discord_path, sub, "modules")
             if not os.path.exists(modules_path):
                 continue
 
             for mod in os.listdir(modules_path):
                 mod_path = os.path.join(modules_path, mod)
+
                 if not any(mod.startswith(prefix) for prefix in SAFE_PREFIXES):
                     try:
                         if os.path.isdir(mod_path):
@@ -380,18 +413,22 @@ def sanitize_discord_modules():
                         else:
                             os.remove(mod_path)
                             logger.info(f"Removed unknown module file: {mod}")
+
                     except Exception as e:
                         logger.warning(f"Failed to remove: {mod_path} — {e}")
 
-            for root, _, files in os.walk(modules_path):
-                for file in files:
-                    if file.lower().endswith(".dll") and file.lower() in SUSPICIOUS_DLLS:
-                        dll_path = os.path.join(root, file)
-                        try:
-                            os.remove(dll_path)
-                            logger.info(f"Removed suspicious DLL: {dll_path}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete DLL {dll_path}: {e}")
+            dll_files, root = ((file, root) for file in files for root, _, files in os.walk(modules_path)
+                                if file.lower().endswith(".dll") and file.lower() in SUSPICIOUS_DLLS)
+
+            for file in dll_files:
+                dll_path = os.path.join(root, file)
+
+                try:
+                    os.remove(dll_path)
+                    logger.info(f"Removed suspicious DLL: {dll_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete DLL {dll_path}: {e}")
+
     except Exception as e:
         logger.error(f"Module sanitization failed: {e}")
 
@@ -401,7 +438,8 @@ class DLLHijackHandler(FileSystemEventHandler):
     Watches for newly created DLLs in the Discord modules folder.
     Deletes known hijackable DLLs in real-time.
     """
-    def on_created(self, event):
+
+    def on_created(self, event) -> None:
         if event.is_directory:
             return
 
@@ -409,6 +447,7 @@ class DLLHijackHandler(FileSystemEventHandler):
         if file_path.lower().endswith(".dll"):
             file_name = os.path.basename(file_path).lower()
             allowed_prefixes = tuple(p.lower() for p in DISCORD_MODULE_PREFIXES)
+
             suspicious_dlls = {
                 "winhttp.dll", "userenv.dll", "version.dll", "wsock32.dll",
                 "mpr.dll", "dnsapi.dll", "cryptbase.dll", "uxtheme.dll",
@@ -418,18 +457,21 @@ class DLLHijackHandler(FileSystemEventHandler):
             try:
                 if any(file_name.startswith(prefix) for prefix in allowed_prefixes):
                     return  # trusted
+
                 if file_name in suspicious_dlls:
                     os.remove(file_path)
+
                     logger.warning(f"⚠️ Deleted suspicious DLL in real-time: {file_path}")
                     messagebox.showwarning("Security Alert", f"Suspicious DLL deleted:\n{file_name}")
                 else:
                     logger.warning(f"⚠️ Unknown DLL detected: {file_path}")
                     messagebox.showinfo("Module Monitor", f"Unknown DLL created: {file_name}")
+
             except Exception as e:
                 logger.error(f"Failed to process new DLL: {file_path} — {e}")
 
 
-def lock_down_discord_modules():
+def lock_down_discord_modules() -> None:
     """
     Placeholder for ACL lockdown — restricts write access to Discord's modules folder.
     """
@@ -459,7 +501,7 @@ def lock_down_discord_modules():
 
 
 # ──────────────── Discord Functions ────────────────
-def clear_discord_cache():
+def clear_discord_cache() -> None:
     """Clear Discord's temporary cache files."""
     if discord_path:
         kill_process_by_name(discord_exe)
@@ -467,138 +509,166 @@ def clear_discord_cache():
         remove_dirs(discord_path, DISCORD_CACHE_DIRS)
 
 
-def clear_discord_logs():
+def clear_discord_logs() -> None:
     """Clear logs, crash dumps, and package archives from Discord."""
     if discord_path:
         remove_files_by_patterns(discord_path, DISCORD_LOG_PATTERNS)
 
 
-def debloat_discord_modules():
+def debloat_discord_modules() -> None:
     """Remove unnecessary module folders not matching known prefixes."""
-    if discord_path:
-        for sub in os.listdir(discord_path):
-            if sub.startswith("app-"):
-                modules_path = os.path.join(discord_path, sub, "modules")
-                if os.path.exists(modules_path):
-                    for mod in os.listdir(modules_path):
-                        if not any(mod.startswith(prefix) for prefix in DISCORD_MODULE_PREFIXES):
-                            try:
-                                shutil.rmtree(os.path.join(modules_path, mod), ignore_errors=True)
-                                logger.info(f"Removed module: {mod}")
-                            except Exception as e:
-                                logger.error(f"Failed to remove module {mod}: {e}")
+    if not discord_path:
+        return
+
+    paths_disc = (sub for sub in os.listdir(discord_path) if sub.startswith("app-"))
+
+    for sub in paths_disc:
+        modules_path = os.path.join(discord_path, sub, "modules")
+
+        if not os.path.exists(modules_path):
+            continue
+
+        mods = (mod for mod in os.listdir(modules_path) if not any(mod.startswith(prefix) for prefix in DISCORD_MODULE_PREFIXES))
+        for mod in mods:
+            try:
+                shutil.rmtree(os.path.join(modules_path, mod), ignore_errors=True)
+                logger.info(f"Removed module: {mod}")
+            except Exception as e:
+                logger.error(f"Failed to remove module {mod}: {e}")
 
 
-def clear_discord_languages():
+def clear_discord_languages() -> None:
     """Remove unapproved locale .pak files from Discord."""
-    if discord_path:
-        for sub in os.listdir(discord_path):
-            if sub.startswith("app-"):
-                loc_path = os.path.join(discord_path, sub, "locales")
-                if os.path.exists(loc_path):
-                    for f in os.listdir(loc_path):
-                        if f.endswith(".pak") and os.path.basename(f) not in DISCORD_ALLOWED_LOCALES:
-                            try:
-                                os.remove(os.path.join(loc_path, f))
-                                logger.info(f"Removed locale: {f}")
-                            except Exception as e:
-                                logger.error(f"Failed to remove locale {f}: {e}")
+    if not discord_path:
+        return
+
+    sub_dirs = (sub for sub in os.listdir(discord_path) if sub.startswith("app-"))
+    for sub in sub_dirs:
+        loc_path = os.path.join(discord_path, sub, "locales")
+
+        if not os.path.exists(loc_path):
+            continue
+
+        loc_dirs = (dir for dir in os.listdir(loc_path) if f.endswith(".pak") and os.path.basename(f) not in DISCORD_ALLOWED_LOCALES)
+        for loc in loc_dirs:
+            try:
+                os.remove(os.path.join(loc_path, loc))
+                logger.info(f"Removed locale: {loc}")
+            except Exception as e:
+                logger.error(f"Failed to remove locale {loc}: {e}")
 
 
-def remove_old_discord_versions():
+def remove_old_discord_versions() -> None:
     """Keep only the newest Discord version and delete the rest."""
-    if discord_path:
-        versions = [v for v in os.listdir(discord_path) if v.startswith("app-")]
-        if len(versions) > 1:
-            latest = max(versions)
-            for v in versions:
-                if v != latest:
-                    try:
-                        shutil.rmtree(os.path.join(discord_path, v), ignore_errors=True)
-                        logger.info(f"Removed old version: {v}")
-                    except Exception as e:
-                        logger.error(f"Failed to remove version {v}: {e}")
+    if not discord_path:
+        return
+
+    versions = [v for v in os.listdir(discord_path) if v.startswith("app-")]
+
+    if len(versions) > 1:
+        latest = max(versions)
+
+        last_versions = (ver for ver in versions if v != latest)
+        for vers in last_versions:
+            try:
+                shutil.rmtree(os.path.join(discord_path, vers), ignore_errors=True)
+                logger.info(f"Removed old version: {vers}")
+            except Exception as e:
+                logger.error(f"Failed to remove version {vers}: {e}")
 
 
 def get_or_create_trusted_hash(updater_path):
     """Verify or save a trusted SHA-256 hash for Discord's Update.exe."""
+    if not os.path.exists(HASH_VERIFICATION_FILE):
+        return
+
     try:
-        if os.path.exists(HASH_VERIFICATION_FILE):
-            with open(HASH_VERIFICATION_FILE, "r") as f:
-                stored_hash = f.read().strip()
-                if stored_hash:
-                    return stored_hash
+        with open(HASH_VERIFICATION_FILE, "r") as f:
+            stored_hash = f.read().strip()
+            if stored_hash: return stored_hash
 
         trusted_hash = compute_file_sha256(updater_path)
         if trusted_hash:
             with open(HASH_VERIFICATION_FILE, "w") as f:
                 f.write(trusted_hash)
+
             logger.info(f"Trusted Update.exe hash saved to {HASH_VERIFICATION_FILE}")
             return trusted_hash
+
     except Exception as e:
         logger.error(f"Failed to get or create trusted hash: {e}")
-    return None
+
+    return
 
 
-def restart_discord():
+def restart_discord() -> None:
     """Securely restart Discord after verifying Update.exe."""
+    def wait_for_process_exit(name: str, timeout: int = 5) -> bool:
+        procs_para_observar = [
+            p for p in psutil.process_iter(['name'])
+            if p.info['name'] and p.info['name'].lower() == nome_processo.lower()
+        ]
+
+        if not procs_para_observar:
+            return True
+
+        _, alive = psutil.wait_procs(procs_para_observar, timeout=timeout)
+        return not alive
+
     if discord_exe and discord_path:
         kill_process_by_name(discord_exe)
-
-        def wait_for_process_exit(name, timeout=5):
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                if not any(proc.info['name'] and proc.info['name'].lower() == name.lower()
-                           for proc in psutil.process_iter(['name'])):
-                    return True
-                time.sleep(0.2)
-            return False
-
         wait_for_process_exit(discord_exe)
 
         updater = os.path.join(discord_path, "Update.exe")
         if os.path.exists(updater):
             trusted_hash = get_or_create_trusted_hash(updater)
+
             if trusted_hash and verify_file_sha256(updater, trusted_hash):
                 subprocess.Popen(
                     [updater, "--processStart", discord_exe],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                 )
+
                 logger.info("Verified and restarted Discord via Update.exe")
             else:
                 logger.warning("Update.exe hash mismatch — launch aborted")
                 messagebox.showwarning("Security Alert", "Discord updater verification failed. Aborting restart.")
 
 
-def disable_discord_autorun():
+def disable_discord_autorun() -> None:
     """Remove Discord from Windows auto-start registry key."""
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
                              0, winreg.KEY_ALL_ACCESS)
+
         try:
             winreg.DeleteValue(key, "Discord")
             logger.info("Disabled Discord autorun")
+
         except FileNotFoundError:
             logger.info("Discord autorun not found")
+
         winreg.CloseKey(key)
     except Exception as e:
         logger.error(f"Failed to disable autorun: {e}")
 
 
-def free_discord_memory():
+def free_discord_memory() -> None:
     """Trim working set memory from Discord processes."""
-    for proc in psutil.process_iter(['pid', 'name']):
-        if proc.info['name'] and "discord" in proc.info['name'].lower():
-            try:
-                ctypes.windll.psapi.EmptyWorkingSet(
-                    ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.info['pid']))
-                logger.info(f"Emptied working set for PID {proc.info['pid']}")
-            except Exception as e:
-                logger.warning(f"Failed to clean memory for PID {proc.info['pid']}: {e}")
+    discord_procss = (proc for proc in psutil.process_iter(['pid', 'name'])
+                      if proc.info['name'] and "discord" in proc.info['name'].lower())
+
+    for proc in discord_procss:
+        try:
+            ctypes.windll.psapi.EmptyWorkingSet(
+                ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.info['pid']))
+            logger.info(f"Emptied working set for PID {proc.info['pid']}")
+        except Exception as e:
+            logger.warning(f"Failed to clean memory for PID {proc.info['pid']}: {e}")
 
 
-def kill_discord_web_instances():
+def kill_discord_web_instances() -> None:
     """Kill any web browser instances with Discord open."""
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
@@ -610,11 +680,12 @@ def kill_discord_web_instances():
             logger.warning(f"Error killing web Discord instance: {e}")
 
 
-def reset_discord_settings():
+def reset_discord_settings() -> None:
     """Reset Discord user settings and local storage."""
     try:
         appdata = os.environ.get("APPDATA", "")
         settings_path = os.path.join(appdata, "discord", "settings.json")
+
         if os.path.exists(settings_path):
             os.remove(settings_path)
             logger.info("Deleted settings.json")
@@ -623,11 +694,12 @@ def reset_discord_settings():
         if os.path.exists(local_storage_path):
             shutil.rmtree(local_storage_path, ignore_errors=True)
             logger.info("Cleared Local Storage")
+
     except Exception as e:
         logger.error(f"Failed to reset Discord settings: {e}")
 
 
-def enhance_discord_voice_quality():
+def enhance_discord_voice_quality() -> None:
     """Boost voice bitrate by modifying settings.json safely."""
     try:
         appdata = os.environ.get("APPDATA", "")
@@ -649,6 +721,7 @@ def enhance_discord_voice_quality():
                 data = json.load(f)
                 if not isinstance(data, dict):
                     raise ValueError("settings.json does not contain a valid JSON object.")
+
             except json.JSONDecodeError as e:
                 logger.warning(f"Corrupt settings.json: {e} — restoring from backup.")
                 shutil.copyfile(backup_path, settings_path)
@@ -664,6 +737,7 @@ def enhance_discord_voice_quality():
         temp_path = settings_path + ".tmp"
         with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
+
         os.replace(temp_path, settings_path)
         os.chmod(settings_path, stat.S_IRUSR | stat.S_IWUSR)
 
@@ -673,7 +747,7 @@ def enhance_discord_voice_quality():
         raise
 
 
-def revert_discord_voice_quality():
+def revert_discord_voice_quality() -> None:
     """Remove min/max bitrate fields to revert audio settings."""
     try:
         appdata = os.environ.get("APPDATA", "")
@@ -695,6 +769,7 @@ def revert_discord_voice_quality():
                 data = json.load(f)
                 if not isinstance(data, dict):
                     raise ValueError("settings.json does not contain a valid JSON object.")
+
             except json.JSONDecodeError as e:
                 logger.warning(f"Corrupt settings.json: {e} — restoring from backup.")
                 shutil.copyfile(backup_path, settings_path)
@@ -703,12 +778,14 @@ def revert_discord_voice_quality():
         if "media" in data and isinstance(data["media"], dict):
             data["media"].pop("min_bitrate", None)
             data["media"].pop("max_bitrate", None)
+
             if not data["media"]:
                 data.pop("media")
 
         temp_path = settings_path + ".tmp"
         with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
+
         os.replace(temp_path, settings_path)
         os.chmod(settings_path, stat.S_IRUSR | stat.S_IWUSR)
 
@@ -718,7 +795,7 @@ def revert_discord_voice_quality():
         raise
 
 
-def enforce_discord_tcp_mode():
+def enforce_discord_tcp_mode() -> None:
     """Block UDP protocol for Discord via Windows Firewall."""
     try:
         if not (discord_path and discord_exe):
@@ -750,13 +827,14 @@ def enforce_discord_tcp_mode():
         raise
 
 
-def reset_discord_tcp_mode():
+def reset_discord_tcp_mode() -> None:
     """Remove firewall rule to re-enable UDP for Discord."""
     try:
         subprocess.call([
             "netsh", "advfirewall", "firewall", "delete", "rule",
             f"name={FIREWALL_RULE_NAME}"
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
         logger.info("Reset Discord to allow both TCP and UDP")
     except Exception as e:
         logger.error(f"Failed to reset TCP/UDP mode: {e}")
@@ -765,7 +843,7 @@ def reset_discord_tcp_mode():
 
 # ──────────────── ToolTip Class ────────────────
 class ToolTip:
-    def __init__(self, widget, text):
+    def __init__(self, widget, text) -> None:
         self.widget = widget
         self.text = text
         self.tooltip = None
@@ -773,7 +851,7 @@ class ToolTip:
         widget.bind("<Enter>", self.show)
         widget.bind("<Leave>", self.hide)
 
-    def show(self, _event=None):
+    def show(self, _event=None) -> None:
         """Display the tooltip window near the widget."""
         x = self.widget.winfo_rootx() + self.widget.winfo_width() + 10
         y = self.widget.winfo_rooty() + (self.widget.winfo_height() // 2) - 10
@@ -793,9 +871,10 @@ class ToolTip:
             padx=6,
             pady=2
         )
+
         label.pack()
 
-    def hide(self, _event=None):
+    def hide(self, _event=None) -> None:
         if self.tooltip:
             self.tooltip.destroy()
             self.tooltip = None
@@ -808,24 +887,27 @@ ctk.set_default_color_theme("blue")
 app = ctk.CTk()
 app.geometry("470x790")
 app.title("Discord Optimizer")
+
+app.wm_iconbitmap(asset("logo.ico"))
 app.resizable(False, False)
 app.overrideredirect(True)
 app.attributes("-alpha", 0.96)
 
 
-def make_window_rounded(win, radius=25):
+def make_window_rounded(win, radius=25) -> None:
     try:
         hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
         region = ctypes.windll.gdi32.CreateRoundRectRgn(
             0, 0, win.winfo_width(), win.winfo_height(), radius, radius
         )
+
         ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
     except Exception as e:
         logger.error(f"Window rounding failed: {e}")
 
 app.x = app.y = None
 
-def do_move_gemt(e):
+def do_move_gemt(e) -> None:
     if app.x is not None and app.y is not None:
         app.geometry(f'+{e.x_root - app.x}+{e.y_root - app.y}')
 
@@ -836,20 +918,22 @@ app.bind("<B1-Motion>", do_move_gemt)
 # ──────────────── System Tray Integration ────────────────
 tray_icon = None
 
-def safe_exit():
+def safe_exit() -> None:
     global tray_icon
+
     if tray_icon:
         try:
             tray_icon.stop()
         except Exception as e:
             logger.warning(f"Tray icon cleanup failed: {e}")
+
     app.destroy()
 
-def minimize_app():
+def minimize_app() -> None:
     app.after(100, app.withdraw)
     create_tray_icon()
 
-def create_tray_icon():
+def create_tray_icon() -> None:
     global tray_icon
 
     image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
@@ -858,19 +942,19 @@ def create_tray_icon():
     dc.ellipse((16, 16, 48, 48), fill='#1a56db', outline='#1e3a8a')
     dc.ellipse((20, 20, 44, 44), fill='#3b82f6')
 
-    def restore_app(icon, item=None):
+    def restore_app(icon, item=None) -> None:
         try:
-            if icon:
-                icon.stop()
+            if icon: icon.stop()
+
             logger.info("App restored from tray")
             app.after(0, lambda: [app.deiconify(), app.lift(), app.overrideredirect(True)])
         except Exception as e:
             logger.error(f"Failed to restore app from tray: {e}")
 
-    def exit_app(icon, item=None):
+    def exit_app(icon, item=None) -> None:
         try:
-            if icon:
-                icon.stop()
+            if icon: icon.stop()
+
             logger.info("App exiting via tray menu")
             app.after(0, safe_exit)
         except Exception as e:
@@ -884,13 +968,15 @@ def create_tray_icon():
 
     tray_icon = pystray.Icon("optimizer", image, "Discord Optimizer", menu)
     tray_icon.title = "Discord Optimizer"
+
     threading.Thread(target=tray_icon.run, daemon=True).start()
 
 
 # ──────────────── Progress Dialog ────────────────
-def show_progress(task_func, title):
+def show_progress(task_func, title: str) -> None:
     popup = ctk.CTkToplevel(app)
     popup.geometry("300x120")
+
     popup.transient(app)
     popup.grab_set()
     popup.overrideredirect(True)
@@ -913,7 +999,7 @@ def show_progress(task_func, title):
     status = ctk.CTkLabel(popup, text="Working...", text_color="#a0aec0")
     status.pack(pady=5)
 
-    def run():
+    def run() -> None:
         try:
             task_func()
             status.configure(text="Completed successfully", text_color="#48bb78")
@@ -931,10 +1017,6 @@ def show_progress(task_func, title):
 # ──────────────── Tabs & Buttons ────────────────
 from PIL import ImageTk, Image
 
-# Asset loader helper
-def asset(file_name):
-    return os.path.join("assets", file_name)
-
 # Logo and title setup
 try:
     logo_img = Image.open(asset("logo.png")).resize((80, 80), Image.LANCZOS)
@@ -946,6 +1028,7 @@ try:
         bg="#1e1e1e",
         borderwidth=0
     )
+
     logo_label.image = logo_tk
     logo_label.pack(pady=(20, 5))
 
@@ -984,10 +1067,11 @@ tabs.add("Credits")
 
 
 # ──────────────── Tab Font Style ────────────────
-def update_tab_font_style():
+def update_tab_font_style() -> None:
     try:
         if hasattr(tabs, "_segmented_button") and hasattr(tabs._segmented_button, "_buttons"):
             selected = tabs._segmented_button._selected_index
+
             for i, btn in enumerate(tabs._segmented_button._buttons):
                 weight = "bold" if i == selected else "normal"
                 btn.configure(font=ctk.CTkFont(family="Segoe UI", size=14, weight=weight))
@@ -1001,13 +1085,16 @@ app.after(100, update_tab_font_style)
 from PIL import Image, ImageTk, ImageDraw
 
 
-def load_rounded_image(path, size=(48, 48)):
+def load_rounded_image(path, size=(48, 48)) -> None:
     img = Image.open(path).resize(size, Image.LANCZOS).convert("RGBA")
     mask = Image.new("L", size, 0)
+
     draw = ImageDraw.Draw(mask)
     draw.ellipse((0, 0, size[0], size[1]), fill=255)
+
     rounded = Image.new("RGBA", size)
     rounded.paste(img, (0, 0), mask)
+
     return ImageTk.PhotoImage(rounded)
 
 sergio_photo = load_rounded_image(os.path.join("assets", "sergio.png"))
@@ -1046,12 +1133,13 @@ def tag_color_for(tag):
         "ux": "#10b981",
         "clean code": "#0ea5e9"
     }
-    return tag_map.get(tag.lower(), "#4b5563")  
+
+    return tag_map.get(tag.lower(), "#4b5563")
 
 from PIL import Image, ImageTk, ImageDraw
 
 
-def create_profile_card(parent, name, role, image, links=None, tags=None):
+def create_profile_card(parent, name, role, image, links=None, tags=None) -> None:
     card = ctk.CTkFrame(parent, fg_color="#1f2937", corner_radius=16)
     card.pack(pady=10, anchor="w", fill="x", padx=10)
 
@@ -1078,6 +1166,7 @@ def create_profile_card(parent, name, role, image, links=None, tags=None):
     if tags:
         tag_frame = tk.Frame(card, bg="#1f2937")
         tag_frame.pack(anchor="w", padx=24, pady=(4, 6), fill="x")
+
         for t in tags:
             tag_color = tag_color_for(t)
             tk.Label(
@@ -1094,7 +1183,7 @@ def create_profile_card(parent, name, role, image, links=None, tags=None):
 
             mask = Image.new("L", (20, 20), 0)
             draw = ImageDraw.Draw(mask)
-            draw.ellipse((0, 0, 20, 20), fill=255)
+            draw.ellipse((0, 0, 19, 19), fill=255)
 
             rounded_icon = Image.new("RGBA", (20, 20))
             rounded_icon.paste(icon_img, (0, 0), mask)
@@ -1114,6 +1203,7 @@ def create_profile_card(parent, name, role, image, links=None, tags=None):
             tooltip_text = os.path.splitext(os.path.basename(icon_path))[0].capitalize()
             ToolTip(icon_btn, tooltip_text)
 
+
 # ──────────────── Credits Tab ────────────────
 credits_inner = ctk.CTkFrame(tabs.tab("Credits"), fg_color="transparent")
 credits_inner.pack(anchor="n", padx=10, pady=10)
@@ -1125,8 +1215,8 @@ create_profile_card(
     "Senior Polyglot Software Architect",
     calixto_photo,
     links=[
-        (asset("github.png"), "https://github.com/Salc-wm"),
-        (asset("discord.png"), "https://discord.gg/UXyUh9FczM")
+        (asset("github.ico"), "https://github.com/Salc-wm"),
+        (asset("discord.ico"), "https://discord.gg/UXyUh9FczM")
     ],
 
     tags=["Backend", "Performance", "Clean Code"]
@@ -1139,10 +1229,10 @@ create_profile_card(
     "Software Engineer & UX Designer",
     sergio_photo,
     links=[
-        (asset("github.png"), "https://github.com/Cybersecsolution"),
+        (asset("github.ico"), "https://github.com/Cybersecsolution"),
         (asset("youtube.png"), "https://www.youtube.com/@Cybersecurity-solution"),
         (asset("tiktok.png"), "https://www.tiktok.com/@cybersec.solutions"),
-        (asset("discord.png"), "https://discord.gg/UXyUh9FczM")
+        (asset("discord.ico"), "https://discord.gg/UXyUh9FczM")
     ],
     tags=["UX", "Frontend", "Security"]
 )
@@ -1162,36 +1252,36 @@ ctk.CTkLabel(
 # ──────────────── 🎮 Discord Tab ────────────────
 discord_tab = tabs.tab("Discord")
 
-discord_buttons = [
-    ("🧹 Clear Cache", clear_discord_cache, "Clearing Discord cache..."),
-    ("📋 Clear Logs", clear_discord_logs, "Clearing Discord logs..."),
-    ("🔄 Restart Discord", restart_discord, "Restarting Discord..."),
-    ("🗑️ Debloat Modules", debloat_discord_modules, "Removing Discord bloat modules..."),
-    ("🛡️ Sanitize Modules", sanitize_discord_modules, "Scanning Discord for hijackable DLLs..."),
-    ("🌐 Clean Languages", clear_discord_languages, "Cleaning Discord language files..."),
-    ("🔄 Remove Old Versions", remove_old_discord_versions, "Removing old Discord versions..."),
-    ("🚫 Disable Auto-Start", disable_discord_autorun, "Disabling Discord auto-start..."),
-    ("🧠 Free RAM", free_discord_memory, "Free up Discord's memory usage"),
+discord_buttons = (
+    ("🧹 Clear Cache", clear_discord_cache,                   "Clearing Discord cache..."),
+    ("📋 Clear Logs", clear_discord_logs,                     "Clearing Discord logs..."),
+    ("🔄 Restart Discord", restart_discord,                   "Restarting Discord..."),
+    ("🗑️ Debloat Modules", debloat_discord_modules,           "Removing Discord bloat modules..."),
+    ("🛡️ Sanitize Modules", sanitize_discord_modules,         "Scanning Discord for hijackable DLLs..."),
+    ("🌐 Clean Languages", clear_discord_languages,           "Cleaning Discord language files..."),
+    ("🔄 Remove Old Versions", remove_old_discord_versions,   "Removing old Discord versions..."),
+    ("🚫 Disable Auto-Start", disable_discord_autorun,        "Disabling Discord auto-start..."),
+    ("🧠 Free RAM", free_discord_memory,                      "Free up Discord's memory usage"),
     ("🎙️ Voice Quality Boost", enhance_discord_voice_quality, "Boosting voice bitrate in settings.json..."),
-    ("🔁 Reset Settings", reset_discord_settings, "Resetting Discord settings to default"),
-    ("📡 TCP Push", enforce_discord_tcp_mode, "Forcing Discord to use TCP only..."),
-    ("🌐 Reset TCP Mode", reset_discord_tcp_mode, "Reverting Discord to normal UDP/TCP mode...")
-]
+    ("🔁 Reset Settings", reset_discord_settings,             "Resetting Discord settings to default"),
+    ("📡 TCP Push", enforce_discord_tcp_mode,                 "Forcing Discord to use TCP only..."),
+    ("🌐 Reset TCP Mode", reset_discord_tcp_mode,             "Reverting Discord to normal UDP/TCP mode...")
+)
 
 manual_tooltips = {
-    "🧹 Clear Cache": "Remove Discord's temporary cache files",
-    "📋 Clear Logs": "Erase Discord's debug and usage logs",
-    "🔄 Restart Discord": "Kill and restart the Discord process",
-    "🗑️ Debloat Modules": "Delete unused bundled modules from Discord",
-    "🛡️ Sanitize Modules": "Remove suspicious DLLs and unverified modules from Discord's folder",
-    "🌐 Clean Languages": "Remove unneeded language files",
+    "🧹 Clear Cache":         "Remove Discord's temporary cache files",
+    "📋 Clear Logs":          "Erase Discord's debug and usage logs",
+    "🔄 Restart Discord":     "Kill and restart the Discord process",
+    "🗑️ Debloat Modules":     "Delete unused bundled modules from Discord",
+    "🛡️ Sanitize Modules":    "Remove suspicious DLLs and unverified modules from Discord's folder",
+    "🌐 Clean Languages":     "Remove unneeded language files",
     "🔄 Remove Old Versions": "Delete outdated Discord installations",
-    "🚫 Disable Auto-Start": "Prevent Discord from auto-launching",
-    "🧠 Free RAM": "Force Discord to release unused memory",
+    "🚫 Disable Auto-Start":  "Prevent Discord from auto-launching",
+    "🧠 Free RAM":            "Force Discord to release unused memory",
     "🎙️ Voice Quality Boost": "Sets min/max bitrate in settings.json for high-quality audio",
-    "🔁 Reset Settings": "Reset user settings and local storage to default",
-    "📡 TCP Push": "Force Discord to use TCP by blocking UDP via Windows Firewall",
-    "🌐 Reset TCP Mode": "Re-enable UDP by removing the firewall block rule"
+    "🔁 Reset Settings":      "Reset user settings and local storage to default",
+    "📡 TCP Push":            "Force Discord to use TCP by blocking UDP via Windows Firewall",
+    "🌐 Reset TCP Mode":      "Re-enable UDP by removing the firewall block rule"
 }
 
 for text, command, popup_title in discord_buttons:
@@ -1231,7 +1321,7 @@ status_label.pack(side="left", padx=10)
 
 
 # ──────────────── 🧭 Window Controls ────────────────
-def create_control_button(text, x_offset_from_right, command, text_color="white", hover_color="#4a5568", bg_color="transparent"):
+def create_control_button(text, x_offset_from_right, command, text_color="white", hover_color="#4a5568", bg_color="transparent") -> None:
     btn = ctk.CTkButton(
         app,
         text=text,
