@@ -1,12 +1,46 @@
 [project]
-name = "debloat-apps-optimizer"
-version = "1.0.3"
-description = "Tweaks for apps in Windows..."
-readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
+  name = "debloat-apps-optimizer"
+  version = "1.0.3"
+
+  description = "Tweaks for apps in Windows..."
+  readme = "README.md"
+  requires-python = ">=3.13"
+  dependencies = [
     "customtkinter>=5.2.2",
     "psutil>=7.0.0",
     "pystray>=0.19.5",
-    "watchdog>=6.0.0",
+    "watchdog>=6.0.0"
+  ]
+
+[project.optional-dependencies]
+dev = ['ruff', 'pyright']
+
+
+[tool.ruff]
+line-lenght = 90
+target-version = 'py313'
+fix = false
+show-fixes = true
+indent-width = 4
+exclude = ['venv', '.venv', 'env', '.env', '__pycache__']
+
+[tool.ruff.lint]
+ignore = ['T201', 'COM812']
+
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.13"
+include = ["src", 'tests']
+exclude = [
+    "**/venv",
+    "**/.venv",
+    "**/env",
+    "**/.env",
+    "**/__pycache__",
 ]
+
+venv = ".venv"
+venvPath = "."
+
+executionEnvironments = [{ root = "src" }]
